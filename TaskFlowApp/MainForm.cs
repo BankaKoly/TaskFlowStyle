@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -8,27 +7,36 @@ namespace TaskFlowApp
 {
     public partial class MainForm : Form
     {
-        private List<Task> tasks;
-        private List<Task> filteredTasks;
+        private List<TaskFlowApp.Task> tasks;
+        private List<TaskFlowApp.Task> filteredTasks;
+        private bool isDataModified = false;
 
         public MainForm()
         {
             InitializeComponent();
-            InitializeDataGrid();
-            LoadTasks();
+            tasks = new List<TaskFlowApp.Task>();
+            filteredTasks = new List<TaskFlowApp.Task>();
+
+            // Налаштовуємо початкові значення
+            cmbStatus.SelectedIndex = 0; // "Всі"
+            cmbSort.SelectedIndex = 0;   // "Сортувати за датою"
+
+            // Автоматично завантажуємо дані
+            LoadTasksFromXml();
         }
 
-        private void InitializeDataGrid()
+        private void MainForm_Load(object sender, EventArgs e)
         {
-            // Налаштування DataGridView
-            dataGridTasks.AutoGenerateColumns = false;
-            dataGridTasks.AllowUserToAddRows = false;
-            dataGridTasks.AllowUserToDeleteRows = false;
-            dataGridTasks.ReadOnly = true;
-            dataGridTasks.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            dataGridTasks.MultiSelect = false;
+            SetupDataGridView();
+            RefreshTaskList();
+        }
 
-            // Додавання колонок
+        private void SetupDataGridView()
+        {
+            dataGridTasks.AutoGenerateColumns = false;
+            dataGridTasks.Columns.Clear();
+
+            // Додаємо колонки
             dataGridTasks.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "Name",
@@ -58,8 +66,7 @@ namespace TaskFlowApp
                 Name = "DueDate",
                 HeaderText = "Термін",
                 DataPropertyName = "DueDate",
-                Width = 120,
-                DefaultCellStyle = new DataGridViewCellStyle { Format = "dd.MM.yyyy" }
+                Width = 120
             });
 
             dataGridTasks.Columns.Add(new DataGridViewTextBoxColumn
@@ -67,101 +74,36 @@ namespace TaskFlowApp
                 Name = "Tag",
                 HeaderText = "Тег",
                 DataPropertyName = "Tag",
-                Width = 100
+                Width = 150
             });
 
-            // Події для подвійного кліку (редагування)
+            // Налаштовуємо форматування дати
+            dataGridTasks.CellFormatting += DataGridTasks_CellFormatting;
+
+            // Додаємо обробник подвійного кліку для редагування
             dataGridTasks.CellDoubleClick += DataGridTasks_CellDoubleClick;
         }
 
-        private void LoadTasks()
+        private void DataGridTasks_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
-            try
+            if (dataGridTasks.Columns[e.ColumnIndex].Name == "DueDate" && e.Value != null)
             {
-                tasks = XmlManager.LoadTasks();
-                filteredTasks = new List<Task>(tasks);
-                UpdateDataGrid();
-                cmbStatus.SelectedIndex = 0; // "Всі"
-                cmbSort.SelectedIndex = 0; // "Сортувати за датою"
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Помилка завантаження завдань: {ex.Message}",
-                    "Помилка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
-        private void UpdateDataGrid()
-        {
-            dataGridTasks.DataSource = null;
-            dataGridTasks.DataSource = filteredTasks;
-            UpdateTitle();
-        }
-
-        private void UpdateTitle()
-        {
-            int totalTasks = filteredTasks.Count;
-            int completedTasks = filteredTasks.Count(t => t.Status == "Зроблено");
-            lblTitle.Text = $"Завдання ({completedTasks}/{totalTasks})";
-        }
-
-        private void FilterTasks()
-        {
-            filteredTasks = new List<Task>(tasks);
-
-            // Фільтр за статусом
-            if (cmbStatus.SelectedIndex > 0)
-            {
-                string selectedStatus = cmbStatus.SelectedItem.ToString();
-                filteredTasks = filteredTasks.Where(t => t.Status == selectedStatus).ToList();
-            }
-
-            // Фільтр за пошуком
-            if (!string.IsNullOrEmpty(txtSearch.Text) && txtSearch.Text != "Пошук")
-            {
-                string searchText = txtSearch.Text.ToLower();
-                filteredTasks = filteredTasks.Where(t =>
-                    t.Name.ToLower().Contains(searchText) ||
-                    t.Description.ToLower().Contains(searchText) ||
-                    t.Tag.ToLower().Contains(searchText)).ToList();
-            }
-
-            // Сортування
-            if (cmbSort.SelectedIndex >= 0)
-            {
-                switch (cmbSort.SelectedIndex)
+                if (e.Value is DateTime dateTime)
                 {
-                    case 0: // За датою
-                        filteredTasks = filteredTasks.OrderBy(t => t.DueDate).ToList();
-                        break;
-                    case 1: // За назвою
-                        filteredTasks = filteredTasks.OrderBy(t => t.Name).ToList();
-                        break;
-                    case 2: // За статусом
-                        filteredTasks = filteredTasks.OrderBy(t => t.Status).ToList();
-                        break;
+                    e.Value = dateTime.ToString("dd.MM.yyyy");
+                    e.FormattingApplied = true;
                 }
             }
-
-            UpdateDataGrid();
         }
 
-        private void SaveTasks()
+        private void DataGridTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
-            try
+            if (e.RowIndex >= 0 && e.RowIndex < filteredTasks.Count)
             {
-                XmlManager.SaveTasks(tasks);
-                MessageBox.Show("Завдання збережено успішно!", "Збереження",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Помилка збереження: {ex.Message}",
-                    "Помилка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                EditTask(filteredTasks[e.RowIndex]);
             }
         }
 
-        // Події кнопок
         private void btnNewTask_Click(object sender, EventArgs e)
         {
             using (TaskForm taskForm = new TaskForm())
@@ -169,84 +111,195 @@ namespace TaskFlowApp
                 if (taskForm.ShowDialog() == DialogResult.OK)
                 {
                     tasks.Add(taskForm.Task);
-                    FilterTasks();
+                    isDataModified = true;
+                    RefreshTaskList();
+                }
+            }
+        }
+
+        private void EditTask(TaskFlowApp.Task taskToEdit)
+        {
+            using (TaskForm taskForm = new TaskForm(taskToEdit))
+            {
+                if (taskForm.ShowDialog() == DialogResult.OK)
+                {
+                    // Знаходимо індекс оригінальної задачі
+                    int index = tasks.IndexOf(taskToEdit);
+                    if (index >= 0)
+                    {
+                        tasks[index] = taskForm.Task;
+                        isDataModified = true;
+                        RefreshTaskList();
+                    }
                 }
             }
         }
 
         private void btnSave_Click(object sender, EventArgs e)
         {
-            SaveTasks();
+            SaveTasksToXml();
         }
 
         private void btnCancel_Click(object sender, EventArgs e)
         {
-            // Функціональність вивантаження
-            MessageBox.Show("Функція вивантаження буде реалізована пізніше",
-                "Інформація", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // Змінено на "Вивантаження" згідно з вашим запитом
+            LoadTasksFromXml();
         }
 
-        // НОВА ФУНКЦІОНАЛЬНІСТЬ ВИДАЛЕННЯ
-        private void btnDelete_Click(object sender, EventArgs e)
+        private void SaveTasksToXml()
         {
-            if (dataGridTasks.SelectedRows.Count == 0)
+            try
             {
-                MessageBox.Show("Будь ласка, оберіть завдання для видалення.",
-                    "Попередження", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                XmlManager.SaveTasks(tasks);
+                isDataModified = false;
+                MessageBox.Show("Дані успішно збережено!", "Збереження",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-
-            var selectedTask = (Task)dataGridTasks.SelectedRows[0].DataBoundItem;
-            
-            DialogResult result = MessageBox.Show(
-                $"Ви впевнені, що хочете видалити завдання \"{selectedTask.Name}\"?",
-                "Підтвердження видалення",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (result == DialogResult.Yes)
+            catch (Exception ex)
             {
-                try
-                {
-                    // Видаляємо з основного списку
-                    tasks.Remove(selectedTask);
-                    
-                    // Оновлюємо відображення
-                    FilterTasks();
-                    
-                    MessageBox.Show("Завдання видалено успішно!",
-                        "Видалення", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Помилка при видаленні завдання: {ex.Message}",
-                        "Помилка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+                MessageBox.Show($"Помилка збереження: {ex.Message}", "Помилка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        // Події фільтрів
+        private void LoadTasksFromXml()
+        {
+            try
+            {
+                tasks = XmlManager.LoadTasks();
+                isDataModified = false;
+                RefreshTaskList();
+                MessageBox.Show("Дані успішно завантажено!", "Завантаження",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Помилка завантаження: {ex.Message}", "Помилка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                tasks = new List<TaskFlowApp.Task>();
+                RefreshTaskList();
+            }
+        }
+
+        private void RefreshTaskList()
+        {
+            ApplyFilters();
+            ApplySorting();
+            dataGridTasks.DataSource = null;
+            dataGridTasks.DataSource = filteredTasks;
+        }
+
+        private void ApplyFilters()
+        {
+            filteredTasks = new List<TaskFlowApp.Task>(tasks);
+
+            // Фільтр за статусом
+            string selectedStatus = cmbStatus.SelectedItem?.ToString();
+            if (!string.IsNullOrEmpty(selectedStatus) && selectedStatus != "Всі")
+            {
+                filteredTasks = filteredTasks.Where(t => t.Status == selectedStatus).ToList();
+            }
+
+            // Фільтр пошуку
+            string searchText = txtSearch.Text;
+            if (!string.IsNullOrEmpty(searchText) && searchText != "Пошук")
+            {
+                filteredTasks = filteredTasks.Where(t =>
+                    t.Name.ToLower().Contains(searchText.ToLower()) ||
+                    t.Description.ToLower().Contains(searchText.ToLower()) ||
+                    t.Tag.ToLower().Contains(searchText.ToLower())
+                ).ToList();
+            }
+        }
+
+        private void ApplySorting()
+        {
+            string selectedSort = cmbSort.SelectedItem?.ToString();
+
+            switch (selectedSort)
+            {
+                case "Сортувати за датою":
+                    filteredTasks = filteredTasks.OrderBy(t => t.DueDate).ToList();
+                    break;
+                case "Сортувати за назвою":
+                    filteredTasks = filteredTasks.OrderBy(t => t.Name).ToList();
+                    break;
+                case "Сортувати за статусом":
+                    filteredTasks = filteredTasks.OrderBy(t => t.Status).ToList();
+                    break;
+            }
+        }
+
+        // Обробники меню
+        private void усіЗавданняToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            lblTitle.Text = "Усі завдання";
+            cmbStatus.SelectedIndex = 0; // "Всі"
+            RefreshTaskList();
+        }
+
+        private void сьогодніToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            lblTitle.Text = "Сьогодні";
+            // Фільтруємо задачі на сьогодні
+            DateTime today = DateTime.Today;
+            filteredTasks = tasks.Where(t => t.DueDate.Date == today).ToList();
+            ApplySorting();
+            dataGridTasks.DataSource = null;
+            dataGridTasks.DataSource = filteredTasks;
+        }
+
+        private void завершеноToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            lblTitle.Text = "Завершено";
+            cmbStatus.SelectedIndex = 3; // "Зроблено"
+            RefreshTaskList();
+        }
+
+        private void тегиToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            // Показуємо унікальні теги
+            var uniqueTags = tasks.Where(t => !string.IsNullOrEmpty(t.Tag))
+                                 .Select(t => t.Tag)
+                                 .Distinct()
+                                 .ToList();
+
+            string message = uniqueTags.Count > 0
+                ? "Доступні теги:\n" + string.Join("\n", uniqueTags)
+                : "Немає доступних тегів";
+
+            MessageBox.Show(message, "Теги", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void налаштуванняToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            MessageBox.Show("Налаштування поки не реалізовані", "Налаштування",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Обробники фільтрів
         private void cmbStatus_SelectedIndexChanged(object sender, EventArgs e)
         {
-            FilterTasks();
+            RefreshTaskList();
         }
 
         private void cmbSort_SelectedIndexChanged(object sender, EventArgs e)
         {
-            FilterTasks();
+            RefreshTaskList();
         }
 
         private void txtSearch_TextChanged(object sender, EventArgs e)
         {
-            FilterTasks();
+            RefreshTaskList();
         }
 
+        // Обробники для placeholder тексту в пошуку
         private void txtSearch_Enter(object sender, EventArgs e)
         {
             if (txtSearch.Text == "Пошук")
             {
                 txtSearch.Text = "";
-                txtSearch.ForeColor = Color.Black;
+                txtSearch.ForeColor = System.Drawing.Color.Black;
             }
         }
 
@@ -255,70 +308,32 @@ namespace TaskFlowApp
             if (string.IsNullOrWhiteSpace(txtSearch.Text))
             {
                 txtSearch.Text = "Пошук";
-                txtSearch.ForeColor = Color.Gray;
+                txtSearch.ForeColor = System.Drawing.Color.Gray;
             }
         }
 
-        // Подвійний клік для редагування
-        private void DataGridTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        // Перевірка перед закриттям форми
+        protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (e.RowIndex >= 0 && e.RowIndex < filteredTasks.Count)
+            if (isDataModified)
             {
-                Task selectedTask = filteredTasks[e.RowIndex];
-                using (TaskForm taskForm = new TaskForm(selectedTask))
+                DialogResult result = MessageBox.Show(
+                    "У вас є незбережені зміни. Бажаєте зберегти їх перед закриттям?",
+                    "Незбережені зміни",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
                 {
-                    if (taskForm.ShowDialog() == DialogResult.OK)
-                    {
-                        // Знаходимо оригінальне завдання в основному списку і оновлюємо його
-                        int originalIndex = tasks.FindIndex(t => t == selectedTask);
-                        if (originalIndex >= 0)
-                        {
-                            tasks[originalIndex] = taskForm.Task;
-                            FilterTasks();
-                        }
-                    }
+                    SaveTasksToXml();
+                }
+                else if (result == DialogResult.Cancel)
+                {
+                    e.Cancel = true;
                 }
             }
-        }
 
-        // Події меню
-        private void усіЗавданняToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            cmbStatus.SelectedIndex = 0;
-            lblTitle.Text = "Усі завдання";
-        }
-
-        private void сьогодніToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            // Фільтр завдань на сьогодні
-            DateTime today = DateTime.Today;
-            filteredTasks = tasks.Where(t => t.DueDate.Date == today).ToList();
-            UpdateDataGrid();
-            lblTitle.Text = "Сьогодні";
-        }
-
-        private void завершеноToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            filteredTasks = tasks.Where(t => t.Status == "Зроблено").ToList();
-            UpdateDataGrid();
-            lblTitle.Text = "Завершено";
-        }
-
-        private void тегиToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            MessageBox.Show("Функція управління тегами буде реалізована пізніше",
-                "Інформація", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-
-        private void налаштуванняToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            MessageBox.Show("Функція налаштувань буде реалізована пізніше",
-                "Інформація", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-
-        private void MainForm_Load(object sender, EventArgs e)
-        {
-            // Форма завантажена
+            base.OnFormClosing(e);
         }
     }
 }
